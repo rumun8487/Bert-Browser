@@ -1,6 +1,6 @@
 import os
-from PyQt5.QtCore import QSize, QUrl
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import QEvent, QSize, QUrl, Qt, QObject
+from PyQt5.QtGui import QIcon, QKeyEvent, QMouseEvent
 from PyQt5.QtWidgets import QPushButton, QWidget, QLineEdit
 from PyQt5.QtWidgets import QVBoxLayout,QHBoxLayout, QSizePolicy
 from PyQt5.QtWebEngineWidgets import QWebEngineHistory, QWebEngineView
@@ -8,7 +8,8 @@ from PyQt5.QtWebEngineWidgets import QWebEngineHistory, QWebEngineView
 class WebView(QWebEngineView):
     def __init__(self , *args, **kwargs):
         super().__init__(*args, **kwargs)
-
+        QApplication.instance().installEventFilter(self)
+        
     def release(self):
         self.deleteLater()
         self.close()
@@ -20,6 +21,27 @@ class WebView(QWebEngineView):
                 qurl.setScheme('http')
             return super().load(qurl)
         return super().load(*args)
+
+    def eventFilter(self, a0: 'QObject', a1: 'QEvent') -> bool:
+        if a0.parent() == self:
+            if a1.type() == QEvent.MouseButtonPress:
+                if a1.button() == Qt.BackButton:
+                    self.forward()
+                elif a1.button() == Qt.BackButton:
+                    self.back()
+            elif a1.type() == QEvent.Wheel:
+                modifier = QApplication.keyboardModifiers()
+                if modifier == Qt.ControlModifier:
+                    y_angle = a1.angleDelta().y()
+                    factor = self.zoomFactor()
+                    if y_angle > 0:
+                        self.setZoomFactor(factor + 0.1)
+                        return True
+                    elif y_angle < 0:
+                        self.setZoomFactor(factor-0.1)
+                        return True
+        return False
+
 
 class WebPageWidget(QWidget):
     _is_loading: bool = False
@@ -153,6 +175,14 @@ class WebPageWidget(QWidget):
     def onClickBtnZoomOut(self):
         factor = self._webview.zoomFactor()
         self._webview.setZoomFactor(factor - 0.1)
+
+    def keyPressEvent(self, a0: QKeyEvent) -> None:
+        if a0.key() == Qt.Key_F5:
+            self._webview.reload()
+        elif a0.key() == Qt.Key_Escape:
+            self._webview.stop()
+        elif a0.key() == Qt.Key_Backspace:
+            self._webview.back()
 
 #실행코드
 if __name__ == '__main__':
