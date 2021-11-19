@@ -1,11 +1,16 @@
 import os
-from PyQt5.QtCore import QEvent, QSize, QUrl, Qt, QObject
+from typing import Union
+from PyQt5.QtCore import Qt, QUrl, QSize, QObject, QEvent, pyqtSignal
 from PyQt5.QtGui import QIcon, QKeyEvent, QMouseEvent
-from PyQt5.QtWidgets import QPushButton, QWidget, QLineEdit
-from PyQt5.QtWidgets import QVBoxLayout,QHBoxLayout, QSizePolicy
-from PyQt5.QtWebEngineWidgets import QWebEngineHistory, QWebEngineView
+from PyQt5.QtWidgets import QWidget, QLineEdit, QPushButton
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QSizePolicy, QApplication
+from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineHistory, QWebEnginePage
 
 class WebView(QWebEngineView):
+
+    sig_new_tab = pyqtSignal(QWebEngineView)
+    sig_new_window = pyqtSignal(QWebEngineView)
+
     def __init__(self , *args, **kwargs):
         super().__init__(*args, **kwargs)
         QApplication.instance().installEventFilter(self)
@@ -42,13 +47,39 @@ class WebView(QWebEngineView):
                         return True
         return False
 
+    def createWindow(self, windowType):
+        if windowType == QWebEnginePage.WebBrowserTab:
+            view = WebView()
+            self.sig_new_tab.emit(view)
+            return view
+        elif windowType == QWebEnginePage.WebBrowserWindow:
+            view = WebView()
+            self.sig_new_window.emit(view)
+            return view
+        # open tab when ctrl key is pressed
+        modifier = QApplication.keyboardModifiers()
+        if modifier == Qt.ControlModifier:
+            view = WebView()
+            self.sig_new_tab.emit(view)
+            return view
+        return QWebEngineView.createWindow(self, windowType)
 
 class WebPageWidget(QWidget):
+
     _is_loading: bool = False
-    def __init__(self, parent=None):
+
+    sig_page_icon = pyqtSignal(QIcon)
+    sig_page_title = pyqtSignal(str)
+    sig_new_tab = pyqtSignal(object)
+    sig_new_window = pyqtSignal(object)
+    sig_close = pyqtSignal(object)
+
+    def __init__(self, parent=None, url: Union[str, QUrl] = 'https://bert-81c5d.web.app/', view: WebView = None):
         super().__init__(parent=parent)
+        path_ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if os.getcwd() != path_:
+            os.chdir(path_)
         self._editUrl = QLineEdit()
-        self._webview = WebView()
         self._btnBackward = QPushButton()
         self._btnForward = QPushButton()
         self._btnRefresh = QPushButton()
@@ -56,8 +87,10 @@ class WebPageWidget(QWidget):
         self._StopIcon = QIcon('./Resource/stop.png')
         self._btnZoomIn = QPushButton()
         self._btnZoomOut = QPushButton()
+        self._webview = WebView() if view is None else view
         self.initControl()
         self.initLayout()
+        self.load(url)
         
 
     def release(self):
@@ -103,9 +136,10 @@ class WebPageWidget(QWidget):
     def initControl(self):
 
         self._editUrl.returnPressed.connect(self.onEditUrlPressed)
-        self._webview.loadStarted.connect(self.onWebViewLoadStarted)
-        self._webview.loadProgress.connect(self.onWebViewLoadProgress)
-        self._webview.loadFinished.connect(self.onWebViewLoadFinished)
+        self.setWebViewSignals()
+        self._webview.titleChanged.connect(lambda x: self.sig_page_title.emit(x))
+        self._webview.iconChanged.connect(lambda x: self.sig_page_icon.emit(x))
+
 
         self._btnBackward.setEnabled(False)
         self._btnBackward.clicked.connect(lambda: self._webview.back())
@@ -129,20 +163,33 @@ class WebPageWidget(QWidget):
         self._btnRefresh.setFixedSize(QSize(24,20))
 
         self._btnZoomIn.clicked.connect(self.onClickBtnZoomIn)
-        self._btnZoomIn.setIcon(QIcon('./Resource/plus.png'))
+        self._btnZoomIn.setIcon(QIcon('./Resource/zoomin.png'))
         self._btnZoomIn.setFlat(True)
         self._btnZoomIn.setIconSize(QSize(20,20))
         self._btnZoomIn.setFixedSize(QSize(24,20))
         self._btnZoomOut.clicked.connect(self.onClickBtnZoomOut)
-        self._btnZoomOut.setIcon(QIcon('./Resource/minus.png'))
+        self._btnZoomOut.setIcon(QIcon('./Resource/zoomout.png'))
         self._btnZoomOut.setFlat(True)
         self._btnZoomOut.setIconSize(QSize(20,20))
         self._btnZoomOut.setFixedSize(QSize(24,20))
 
-    
+    def setWebViewSignals(self):
+        self._webview.loadStarted.connect(self.onWebViewLoadStarted)
+        self._webview.loadProgress.connect(self.onWebViewLoadProgress)
+        self._webview.loadFinished.connect(self.onWebViewLoadFinished)
+        self._webview.sig_new_tab.connect(self.sig_new_tab.emit)
+        self._webview.sig_new_window.connect(self.sig_new_window.emit)
+
+
+    def load(self, url: Union[str, QUrl]):
+        if isinstance(url, QUrl):
+            self._webview.load(url)
+        else:
+            self._webview.load(QUrl(url))
+
     def onEditUrlPressed(self):
         url = self._editUrl.text()
-        self._webview.load(QUrl(url))
+        self.load(url)
 
 
     def onWebViewLoadStarted(self):
@@ -154,6 +201,7 @@ class WebPageWidget(QWidget):
         pass
 
     def onWebViewLoadFinished(self, result: bool):
+        self._is_loading = False
         url:QUrl = self._webview.url()
         self._editUrl.setText(url.toString())
         history: QWebEngineHistory = self._webview.history()
@@ -177,12 +225,34 @@ class WebPageWidget(QWidget):
         self._webview.setZoomFactor(factor - 0.1)
 
     def keyPressEvent(self, a0: QKeyEvent) -> None:
-        if a0.key() == Qt.Key_F5:
+        modifier = QApplication.keyboardModifiers()
+        if a0.key() == Qt.Key_N:
+            if modifier == Qt.ControlModifier:
+                self.sig_new_window.emit(None)
+        elif a0.key() == Qt.Key_T:
+            if modifier == Qt.ControlModifier:
+                self.sig_new_tab.emit(None)
+        elif a0.key() == Qt.Key_W:
+            if modifier == Qt.ControlModifier:
+                self.sig_close.emit(self)
+        elif a0.key() == Qt.Key_F5:
             self._webview.reload()
+        elif a0.key() == Qt.Key_F6:
+            self._editUrl.setFocus()
+            self._editUrl.selectAll()
         elif a0.key() == Qt.Key_Escape:
             self._webview.stop()
         elif a0.key() == Qt.Key_Backspace:
             self._webview.back()
+
+    def mousePressEvent(self, a0: QMouseEvent) -> None:
+        pass
+
+    def url(self) -> QUrl:
+        return self._webview.url()
+
+    def view(self) -> WebView:
+        return self._webview
 
 #실행코드
 if __name__ == '__main__':
